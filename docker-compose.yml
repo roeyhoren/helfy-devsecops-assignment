@@ -1,0 +1,213 @@
+# Docker compose for the whole CDC pipeline
+# Note: removed version since it's deprecated now
+services:
+  # TiDB Cluster
+  pd0:
+    image: pingcap/pd:v7.1.0
+    container_name: pd0
+    ports:
+      - "2379:2379"
+    volumes:
+      - ./data/pd0:/data
+    command:
+      - --name=pd0
+      - --data-dir=/data/pd0
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd0:2379
+      - --advertise-peer-urls=http://pd0:2380
+      - --initial-cluster=pd0=http://pd0:2380
+    restart: on-failure
+    networks:
+      - tidb-net
+
+  tikv0:
+    image: pingcap/tikv:v7.1.0
+    container_name: tikv0
+    ports:
+      - "20160:20160"
+    volumes:
+      - ./data/tikv0:/data
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv0:20160
+      - --data-dir=/data/tikv0
+      - --pd=pd0:2379
+    depends_on:
+      - pd0
+    restart: on-failure
+    networks:
+      - tidb-net
+
+  tidb0:
+    image: pingcap/tidb:v7.1.0
+    container_name: tidb0
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - --store=tikv
+      - --path=pd0:2379
+      - --log-file=/dev/stdout
+      - --advertise-address=tidb0
+    depends_on:
+      - tikv0
+    restart: on-failure
+    networks:
+      - tidb-net
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - tidb-net
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - ./data/kafka:/kafka
+    networks:
+      - tidb-net
+
+  # TiCDC - this took forever to get right
+  ticdc:
+    image: pingcap/ticdc:v7.1.0
+    container_name: ticdc
+    depends_on:
+      - tidb0
+      - kafka
+    ports:
+      - "8300:8300"
+    volumes:
+      - ./configs/ticdc-config.toml:/ticdc-config.toml:ro
+      - ./scripts/start-cdc.sh:/start-cdc.sh:ro
+    command: ["sh", "/start-cdc.sh"]
+    environment:
+      - PD_ENDPOINTS=http://pd0:2379
+    networks:
+      - tidb-net
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - tidb-net
+
+  # Filebeat
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./configs/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./logs:/logs:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: filebeat -e -strict.perms=false
+    networks:
+      - tidb-net
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./data/prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - tidb-net
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./data/grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - elasticsearch
+    networks:
+      - tidb-net
+
+  # Node.js Consumer Application
+  consumer-app:
+    build: ./consumer-app
+    container_name: consumer-app
+    depends_on:
+      - kafka
+      - elasticsearch
+      - prometheus
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - PROMETHEUS_PORT=8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - tidb-net
+
+networks:
+  tidb-net:
+    driver: bridge
+
+volumes:
+  pd0-data:
+  tikv0-data:
+  kafka-data:
+  elasticsearch-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,12 @@
+# TiCDC Configuration
+[server]
+addr = "0.0.0.0:8300"
+advertise-addr = "ticdc:8300"
+log-file = "/dev/stdout"
+log-level = "info"
+
+[security]
+# No TLS for development
+
+[cluster]
+pd-endpoints = ["http://pd0:2379"]

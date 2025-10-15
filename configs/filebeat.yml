@@ -1,0 +1,36 @@
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /logs/*.log
+  fields:
+    logtype: application
+  fields_under_root: true
+
+- type: docker
+  enabled: true
+  containers.path: "/var/lib/docker/containers"
+  containers.stream: "all"
+  containers.ids:
+    - "*"
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "filebeat-logs-%{+yyyy.MM.dd}"
+
+setup.template.enabled: true
+setup.template.name: "filebeat-logs"
+setup.template.pattern: "filebeat-logs-*"
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /usr/share/filebeat/logs
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
+
+processors:
+- add_host_metadata:
+    when.not.contains.tags: forwarded
+- add_docker_metadata: ~
