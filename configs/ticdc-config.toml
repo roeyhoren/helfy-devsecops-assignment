@@ -1,12 +1,8 @@
-# TiCDC Configuration
-[server]
-addr = "0.0.0.0:8300"
-advertise-addr = "ticdc:8300"
-log-file = "/dev/stdout"
-log-level = "info"
+# TiCDC Configuration for v7.1.0
+# Most server options are passed as command line flags, not config file
 
 [security]
-# No TLS for development
-
-[cluster]
-pd-endpoints = ["http://pd0:2379"]
+# TLS configuration would go here if needed
+# ca-path = ""
+# cert-path = ""
+# key-path = ""

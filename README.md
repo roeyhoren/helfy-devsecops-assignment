@@ -51,14 +51,24 @@ Took me a while to get TiCDC working properly, but it's solid now.
 
 ## Quick Start
 
-### Just run this:
+### One-Click Deployment:
 
 ```bash
-cd helfy-assignment
+./start.sh
+```
+
+**That's it!** The script handles everything:
+- Sets up proper permissions automatically
+- Starts all services in correct order
+- Shows you when everything is ready
+
+### Manual method:
+
+```bash
 docker-compose up -d
 ```
 
-That's it! Well, almost. Give it 2-3 minutes to start up completely (TiDB is a bit slow to initialize).
+Give it 2-3 minutes to start up completely (TiDB is a bit slow to initialize).
 
 ### Pro tip: Watch the logs
 

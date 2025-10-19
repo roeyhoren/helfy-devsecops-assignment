@@ -57,6 +57,12 @@ services:
     restart: on-failure
     networks:
       - tidb-net
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -P4000 -uroot -e 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # Zookeeper for Kafka
   zookeeper:
@@ -98,7 +104,8 @@ services:
     image: pingcap/ticdc:v7.1.0
     container_name: ticdc
     depends_on:
-      - tidb0
+      - pd0
+      - tikv0
       - kafka
     ports:
       - "8300:8300"
@@ -110,11 +117,13 @@ services:
       - PD_ENDPOINTS=http://pd0:2379
     networks:
       - tidb-net
+    restart: on-failure
 
   # Elasticsearch
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch
+    user: "1000:1000"
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -147,6 +156,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.45.0
     container_name: prometheus
+    user: "65534:65534"
     ports:
       - "9090:9090"
     volumes:
@@ -166,6 +176,7 @@ services:
   grafana:
     image: grafana/grafana:10.2.0
     container_name: grafana
+    user: "472:472"
     ports:
       - "3000:3000"
     environment:
